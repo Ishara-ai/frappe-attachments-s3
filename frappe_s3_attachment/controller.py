@@ -18,16 +18,19 @@ import magic
 
 
 class S3Operations(object):
-
     def __init__(self):
         """
-        Function to initialise the aws settings from frappe S3 File attachment
+        Function to initialise the S3 settings from frappe S3 File attachment
         doctype.
         """
         self.s3_settings_doc = frappe.get_doc(
             'S3 File Attachment',
             'S3 File Attachment',
         )
+        # Custom URL field
+        endpoint_url = self.s3_settings_doc.get('endpoint_url')
+
+        # Fallback to default AWS if not provided
         if (
             self.s3_settings_doc.aws_key and
             self.s3_settings_doc.aws_secret
@@ -37,13 +40,15 @@ class S3Operations(object):
                 aws_access_key_id=self.s3_settings_doc.aws_key,
                 aws_secret_access_key=self.s3_settings_doc.aws_secret,
                 region_name=self.s3_settings_doc.region_name,
-                config=Config(signature_version='s3v4')
+                config=Config(signature_version='s3v4'),
+                endpoint_url=endpoint_url or None
             )
         else:
             self.S3_CLIENT = boto3.client(
                 's3',
                 region_name=self.s3_settings_doc.region_name,
-                config=Config(signature_version='s3v4')
+                config=Config(signature_version='s3v4'),
+                endpoint_url=endpoint_url or None
             )
         self.BUCKET = self.s3_settings_doc.bucket_name
         self.folder_name = self.s3_settings_doc.folder_name
@@ -173,7 +178,8 @@ class S3Operations(object):
 
         }
         if file_name:
-            params['ResponseContentDisposition'] = 'filename={}'.format(file_name)
+            params['ResponseContentDisposition'] = 'inline; filename="{}"'.format(file_name)
+
 
         url = self.S3_CLIENT.generate_presigned_url(
             'get_object',
