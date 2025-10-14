@@ -13,6 +13,7 @@
   "aws_secret",
   "section_break_7",
   "region_name",
+  "endpoint_url",
   "folder_name",
   "signed_url_expiry_time",
   "section_break_10",
@@ -79,11 +80,17 @@
    "fieldname": "migrate_existing_files",
    "fieldtype": "Button",
    "label": "Migrate Existing Files"
+  },
+  {
+   "description": "Custom S3-compatible endpoint",
+   "fieldname": "endpoint_url",
+   "fieldtype": "Data",
+   "label": "S3 Endpoint URL"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2025-10-09 09:34:07.636537",
+ "modified": "2025-10-14 17:18:34.248718",
  "modified_by": "Administrator",
  "module": "Frappe S3 Attachment",
  "name": "S3 File Attachment",
