@@ -5,6 +5,7 @@ import os
 import random
 import re
 import string
+import pickle
 
 import boto3
 
@@ -101,7 +102,7 @@ class S3Operations(object):
             return final_key
 
     def upload_files_to_s3_with_key(
-            self, file_path, file_name, is_private, parent_doctype, parent_name
+            self, file_path, file_name, is_private, parent_doctype, parent_name, callback=None
     ):
         """
         Uploads a new file to S3.
@@ -111,29 +112,23 @@ class S3Operations(object):
         key = self.key_generator(file_name, parent_doctype, parent_name)
         content_type = mime_type
         try:
+            extra_args = {
+                "ContentType": content_type,
+                "Metadata": {
+                    "ContentType": content_type,
+                }
+            }
+            
             if is_private:
-                self.S3_CLIENT.upload_file(
-                    file_path, self.BUCKET, key,
-                    ExtraArgs={
-                        "ContentType": content_type,
-                        "Metadata": {
-                            "ContentType": content_type,
-                            "file_name": file_name
-                        }
-                    }
-                )
+                extra_args["Metadata"]["file_name"] = file_name
             else:
-                self.S3_CLIENT.upload_file(
-                    file_path, self.BUCKET, key,
-                    ExtraArgs={
-                        "ContentType": content_type,
-                        "ACL": 'public-read',
-                        "Metadata": {
-                            "ContentType": content_type,
+                extra_args["ACL"] = 'public-read'
 
-                        }
-                    }
-                )
+            self.S3_CLIENT.upload_file(
+                file_path, self.BUCKET, key,
+                ExtraArgs=extra_args,
+                Callback=callback
+            )
 
         except boto3.exceptions.S3UploadFailedError:
             frappe.throw(frappe._("File Upload Failed. Please try again."))
@@ -195,16 +190,60 @@ def file_upload_to_s3(doc, method):
     parent_doctype = doc.attached_to_doctype or 'File'
     parent_name = doc.attached_to_name
     ignore_s3_upload_for_doctype = frappe.local.conf.get('ignore_s3_upload_for_doctype') or ['Data Import']
+    
+    upload_id = frappe.form_dict.get('upload_id')
+    callback = None
+    
+    if upload_id:
+        file_size = os.path.getsize(site_path + path if doc.is_private else site_path + '/public' + path)
+        
+        # Capture redis client and key in the main thread (where frappe.local is available)
+        redis_client = frappe.cache()
+        progress_key = redis_client.make_key(f"upload_progress:{upload_id}")
+        
+        def progress_callback(bytes_transferred):
+            # Use raw redis client to avoid accessing frappe.local in the worker thread
+            value = {
+                "stage": "s3_transfer",
+                "uploaded": bytes_transferred,
+                "total": file_size,
+                "upload_id": upload_id
+            }
+            try:
+                redis_client.set(progress_key, pickle.dumps(value, protocol=5), ex=3600)
+            except Exception:
+                pass
+            
+        callback = progress_callback
+        # Set initial state
+        frappe.cache().set_value(f"upload_progress:{upload_id}", {
+            "stage": "s3_start",
+            "uploaded": 0,
+            "total": file_size,
+            "upload_id": upload_id
+        }, expires_in_sec=3600)
+
     if parent_doctype not in ignore_s3_upload_for_doctype:
         if not doc.is_private:
             file_path = site_path + '/public' + path
         else:
             file_path = site_path + path
-        key = s3_upload.upload_files_to_s3_with_key(
-            file_path, doc.file_name,
-            doc.is_private, parent_doctype,
-            parent_name
-        )
+            
+        try:
+            key = s3_upload.upload_files_to_s3_with_key(
+                file_path, doc.file_name,
+                doc.is_private, parent_doctype,
+                parent_name,
+                callback=callback
+            )
+        except Exception as e:
+            if upload_id:
+                frappe.cache().set_value(f"upload_progress:{upload_id}", {
+                    "stage": "s3_error",
+                    "error": str(e),
+                    "upload_id": upload_id
+                }, expires_in_sec=3600)
+            raise e
 
         if doc.is_private:
             method = "frappe_s3_attachment.controller.generate_file"
@@ -226,6 +265,28 @@ def file_upload_to_s3(doc, method):
             frappe.db.set_value(parent_doctype, parent_name, frappe.get_meta(parent_doctype).get('image_field'), file_url)
 
         frappe.db.commit()
+        
+        if upload_id:
+            frappe.cache().set_value(f"upload_progress:{upload_id}", {
+                "stage": "s3_complete",
+                "uploaded": file_size,
+                "total": file_size,
+                "upload_id": upload_id
+            }, expires_in_sec=3600)
+
+
+@frappe.whitelist()
+def get_upload_progress(upload_id):
+    return frappe.cache().get_value(f"upload_progress:{upload_id}")
+
+
+@frappe.whitelist()
+def get_s3_url(key, file_name=None):
+    """
+    Return the signed s3 url.
+    """
+    s3_upload = S3Operations()
+    return s3_upload.get_url(key, file_name)
 
 
 @frappe.whitelist()
