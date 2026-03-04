@@ -169,17 +169,17 @@ class S3Operations(object):
         :param key: s3 object key
         """
         if self.s3_settings_doc.signed_url_expiry_time:
-            self.signed_url_expiry_time = self.s3_settings_doc.signed_url_expiry_time # noqa
+            self.signed_url_expiry_time = self.s3_settings_doc.signed_url_expiry_time  # noqa
         else:
             self.signed_url_expiry_time = 120
         params = {
-                'Bucket': self.BUCKET,
-                'Key': key,
+            'Bucket': self.BUCKET,
+            'Key': key,
 
         }
         if file_name:
-            params['ResponseContentDisposition'] = 'inline; filename="{}"'.format(file_name)
-
+            params['ResponseContentDisposition'] = 'inline; filename="{}"'.format(
+                file_name)
 
         url = self.S3_CLIENT.generate_presigned_url(
             'get_object',
@@ -195,12 +195,16 @@ def file_upload_to_s3(doc, method):
     """
     check and upload files to s3. the path check and
     """
+    if doc.attached_to_doctype == "Prepared Report":
+        return
+
     s3_upload = S3Operations()
     path = doc.file_url
     site_path = frappe.utils.get_site_path()
     parent_doctype = doc.attached_to_doctype or 'File'
     parent_name = doc.attached_to_name
-    ignore_s3_upload_for_doctype = frappe.local.conf.get('ignore_s3_upload_for_doctype') or ['Data Import']
+    ignore_s3_upload_for_doctype = frappe.local.conf.get(
+        'ignore_s3_upload_for_doctype') or ['Data Import']
     if parent_doctype not in ignore_s3_upload_for_doctype:
         if not doc.is_private:
             file_path = site_path + '/public' + path
@@ -214,7 +218,8 @@ def file_upload_to_s3(doc, method):
 
         if doc.is_private:
             method = "frappe_s3_attachment.controller.generate_file"
-            file_url = """/api/method/{0}?key={1}&file_name={2}""".format(method, key, doc.file_name)
+            file_url = """/api/method/{0}?key={1}&file_name={2}""".format(
+                method, key, doc.file_name)
         else:
             file_url = '{}/{}/{}'.format(
                 s3_upload.S3_CLIENT.meta.endpoint_url,
@@ -229,7 +234,8 @@ def file_upload_to_s3(doc, method):
         doc.file_url = file_url
 
         if parent_doctype and frappe.get_meta(parent_doctype).get('image_field'):
-            frappe.db.set_value(parent_doctype, parent_name, frappe.get_meta(parent_doctype).get('image_field'), file_url)
+            frappe.db.set_value(parent_doctype, parent_name, frappe.get_meta(
+                parent_doctype).get('image_field'), file_url)
 
         frappe.db.commit()
 
